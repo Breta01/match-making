@@ -1,0 +1,6 @@
+riotwatcher
+pandas
+numpy
+gdown
+# Development
+jupyterlab
