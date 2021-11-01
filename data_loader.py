@@ -1,5 +1,6 @@
 """Module providing the data (it downloads the data in case they are missing)"""
 from collections import deque
+import gc
 import lzma
 from pathlib import Path
 import pickle
@@ -15,7 +16,8 @@ from env import RIOT_GAME_API
 summoner_region = 'na1'
 match_region = "americas"
 game_type = "RANKED_SOLO_5x5"
-tiers = ["DIAMOND", "PLATINUM", "GOLD", "SILVER", "BRONZE", "IRON"]
+# tiers = ["DIAMOND", "PLATINUM", "GOLD", "SILVER", "BRONZE", "IRON"]
+tiers = ["GOLD", "SILVER", "BRONZE"]
 divisions = ["I", "II", "III", "IV"]
 w = LolWatcher(RIOT_GAME_API)
 
@@ -82,7 +84,10 @@ def get_local_match_data():
     """Load data file with all matches."""
     if MATCHE_FILE.exists():
         with lzma.open(MATCHE_FILE, "r") as f:
-            return pickle.load(f)
+            gc.disable()
+            m =  pickle.load(f)
+            gc.enable()
+            return m
     return []
 
 
@@ -139,8 +144,9 @@ def download_data(num_players=1e3):
                     queue.append(puuid)
 
         if (i + 1) % 10 == 0:
-            print(f"Saving matches. Number of players/matches: {i}/{len(matches_list)}")
+            print(f"Saving matches... Number of players/matches: {i}/{len(matches_list)}")
             _save_final_state(matches_list, player_ids, queue)
+            print(" -> Saved")
 
     _save_final_state(matches_list, player_ids, queue)
     return matches_list
