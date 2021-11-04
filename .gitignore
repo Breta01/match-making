@@ -131,3 +131,5 @@ dmypy.json
 # Added
 env.py
 data/*
+data_backup/
+model/

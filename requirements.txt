@@ -2,5 +2,8 @@ riotwatcher
 pandas
 numpy
 gdown
+tensorflow==2.6.1
+keras==2.6.*
+gurobipy
 # Development
 jupyterlab
