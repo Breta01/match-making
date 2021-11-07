@@ -1,4 +1,4 @@
-"""Module providing the data (it downloads the data in case they are missing)"""
+"""Module providing the data about matches (it downloads the data in case they are missing)."""
 from collections import deque
 import gc
 import lzma

@@ -3,21 +3,24 @@ from gurobipy import GRB
 import numpy as np
 
 from prediction_model import load_player_model, get_final_weights
+from player_data_loader import get_local_player_data
 
 
-# Load player model
+# Load player model + weights
 player_model = load_player_model()
+weights = get_final_weights()
 
-# Demo player data
-players = np.array([[1, 2], [7, 8], [3, 4], [5, 6], [1, 2], [7, 8], [3, 4], [5, 6], [1, 2], [7, 8], [3, 4], [5, 6]])
-
-# Replace with player_mode.predict(players) in case of memory issues
-processed_players = np.array(player_model(players))
+# Player data
+players = get_local_player_data()
 
 
 def process_players(players):
     """Process player vectors by player_model."""
-    return np.array(player_model(players))
+    # Replace with player_mode.predict(players) in case of memory issues
+    columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
+    return np.array(player_model(
+        players[columns].to_numpy()
+    ))
 
 
 def optimize(players, weights):
@@ -63,10 +66,9 @@ def optimize(players, weights):
 
 
 if __name__ == "__main__":
-    weights = get_final_weights()
     processed_players = process_players(players)
 
-    model = optimize(processed_players, weights)
+    model = optimize(processed_players[:100], weights)
 
     # Print vars and objective
     for v in model.getVars():
