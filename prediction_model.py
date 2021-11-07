@@ -8,6 +8,8 @@ Methods:
 from pathlib import Path
 
 import numpy as np
+from sklearn.model_selection import RepeatedKFold
+from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.python.keras.utils.generic_utils import to_list
@@ -30,6 +32,13 @@ def load_data():
     """Load data for training/testing."""
     players = get_local_player_data()
     matches = get_local_match_data()
+
+    # This should be fit only on training data not the whole dataset
+    # for proper evaluation
+    # TODO: Save normalization for optimization
+    columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
+    norm = StandardScaler().fit(players[columns])
+    players[columns] = norm.transform(players[columns])
 
     X, y = [], []
     for match in matches:
@@ -76,11 +85,12 @@ def get_final_weights():
 def build_player_model(player_vec_size):
     """Create player model which is applied to individual players."""
     inputs = tf.keras.Input(shape=(player_vec_size,), name="player_input")
-    x = layers.Dense(4, activation="relu")(inputs)
+    x = layers.Dense(10, activation="relu")(inputs)
+    x = layers.Dense(5, activation="relu")(x)
     return tf.keras.Model(inputs, x, name="player_model")
 
 
-def build_model(player_model, player_vec_size):
+def build_model(player_vec_size):
     """Build main model for match result prediction."""
     player_model = build_player_model(player_vec_size)
 
@@ -97,37 +107,57 @@ def build_model(player_model, player_vec_size):
     diff = layers.Subtract(name="diff_teams")([team_a, team_b])
     # Experimenting add: kernel_initializer="ones", trainable=False
     outputs = layers.Dense(1, activation=None, name="final_weights", use_bias=False)(diff)
-    return tf.keras.Model(inputs, outputs)
 
-
-if __name__ == "__main__":
-    X, y = load_data()
-    print("Shape of matches:", X.shape)
-
-    # Player model used for processing player stats
-    player_model = build_player_model(player_vec_size=X.shape[-1])
-    player_model.compile()
-
-    model = build_model(player_model, player_vec_size=X.shape[-1])
+    model = tf.keras.Model(inputs, outputs)
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
         loss=tf.keras.losses.BinaryCrossentropy(
             from_logits=True,
-            label_smoothing=0,
+            label_smoothing=0.05, # Prevent some large values for sure-outcome matches
             axis=-1,
             reduction="auto",
             name="binary_crossentropy",
         ),
         metrics=[tf.keras.metrics.BinaryAccuracy()]
     )
+    return model, player_model
+
+
+if __name__ == "__main__":
+    X, y = load_data()
+    # TODO: extend X and y by matches with switched teams?
+    print("Shape of matches:", X.shape)
 
     batch_size = 64
-    model.fit(X, y, batch_size=batch_size, epochs=2000)
-    # TODO: evaluate
+
+    # 5-fold evaluation
+    kfold = RepeatedKFold(n_splits=6, n_repeats=1)
+    scores = []
+    for i, (train, test) in enumerate(kfold.split(X, y)):
+        model = build_model(X.shape[-1])[0]
+        model.fit(
+            X[train],
+            y[train],
+            validation_data=(X[test], y[test]),
+            batch_size=batch_size,
+            epochs=100,
+            verbose=0,
+        )
+        model.evaluate(X[train], y[train])
+        scores.append(model.evaluate(X[test], y[test])[1])
+        print(f"Evaluated split: {i+1}/{kfold.n_repeats * kfold.cvargs['n_splits']}")
+    print("Mean accuracy:", sum(scores) / len(scores))
+
+    # Train final model on all data
+    # Player model used for processing player stats
+    model, player_model = build_model(player_vec_size=X.shape[-1])
+
+    model.fit(X, y, batch_size=batch_size, epochs=200)
     model.summary()
 
     model.save(MAIN_MODEL_PATH)
     player_model.save(PLAYER_MODEL_PATH)
+    print("Model saved.")
 
     weigths = model.get_layer("final_weights").get_weights()
     print("Final weights:", weigths)

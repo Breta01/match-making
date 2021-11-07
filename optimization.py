@@ -18,6 +18,7 @@ def process_players(players):
     """Process player vectors by player_model."""
     # Replace with player_mode.predict(players) in case of memory issues
     columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
+    # TODO: normalize players before processing
     return np.array(player_model(
         players[columns].to_numpy()
     ))
