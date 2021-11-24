@@ -34,8 +34,8 @@ def optimize(players):
     m = gp.Model("matching")
 
     # Create variable for each player
-    team_a_vars = [m.addVar(vtype=GRB.BINARY, name=f"pa_{i}") for i in range(len(players))]
-    team_b_vars = [m.addVar(vtype=GRB.BINARY, name=f"pb_{i}") for i in range(len(players))]
+    team_a_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_a_{i}") for i in range(len(players))]
+    team_b_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_b_{i}") for i in range(len(players))]
 
     ob = m.addVar(name="objective")
     abs_ob = m.addVar(name="abs_objective")
@@ -75,3 +75,15 @@ if __name__ == "__main__":
         print('%s %g' % (v.varName, v.x))
 
     print('Obj: %g' % model.objVal)
+
+    indices_a, indices_b = [], []
+    for v in model.getVars():
+        if v.varName[:7] == "player_" and v.x > 0.9:
+            if v.varName.split("_")[1] == "a":
+                indices_a.append(int(v.varName.split("_")[-1]))
+            else:
+                indices_b.append(int(v.varName.split("_")[-1]))
+
+    assert len(indices_a) == 5 and len(indices_b) == 5
+    print("Team A:", indices_a)
+    print("Team B:", indices_b)
