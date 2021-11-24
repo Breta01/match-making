@@ -7,8 +7,8 @@ from player_data_loader import get_local_player_data
 
 
 # Load player model + weights
-player_model = load_player_model()
-weights = get_final_weights()
+PLAYER_MODEL = load_player_model()
+WEIGHTS = get_final_weights()
 
 # Player data
 players = get_local_player_data()
@@ -19,17 +19,16 @@ def process_players(players):
     # Replace with player_mode.predict(players) in case of memory issues
     columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
     # TODO: normalize players before processing
-    return np.array(player_model(
+    return np.array(PLAYER_MODEL(
         players[columns].to_numpy()
     ))
 
 
-def optimize(players, weights):
+def optimize(players):
     """Build optimalization model, optimize and return it.
     
     Args:
         players (np.array): array of processd player vectors (result of player_model).
-        weights (np.array): weights of final values from prediction model.
     """
     # Create a new model
     m = gp.Model("matching")
@@ -47,7 +46,7 @@ def optimize(players, weights):
         ob == gp.quicksum(
             p[i] * w * a - p[i] * w * b
             for p, a, b in player_zip
-            for i, w in enumerate(weights)
+            for i, w in enumerate(WEIGHTS)
         ), 
         "objective"
     )
@@ -69,7 +68,7 @@ def optimize(players, weights):
 if __name__ == "__main__":
     processed_players = process_players(players)
 
-    model = optimize(processed_players[:100], weights)
+    model = optimize(processed_players[:100])
 
     # Print vars and objective
     for v in model.getVars():

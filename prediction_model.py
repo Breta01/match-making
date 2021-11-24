@@ -22,8 +22,7 @@ MAIN_MODEL_PATH = Path(__file__).parent.joinpath("model/main_model")
 PLAYER_MODEL_PATH = Path(__file__).parent.joinpath("model/player_model")
 
 
-def player_data(puuid, players):
-    columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
+def player_data(puuid, players, columns):
     player = players.loc[puuid, columns]
     return player.to_list()
 
@@ -36,11 +35,17 @@ def load_data():
     # This should be fit only on training data not the whole dataset
     # for proper evaluation
     # TODO: Save normalization for optimization
-    columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
+    columns = [
+        *filter(lambda x: "mean" in x, players.columns),
+    ]
     norm = StandardScaler().fit(players[columns])
     players[columns] = norm.transform(players[columns])
+    columns.extend([
+        *filter(lambda x: "position" in x, players.columns),
+        "win_ratio"
+    ])
 
-    X, y = [], []
+    X, Xr, y, yr = [], [], [], []
     for match in matches:
         # Skip matches with missing players
         if not all(p in players.index for p in match["metadata"]["participants"]):
@@ -50,23 +55,27 @@ def load_data():
         team_a, team_b = info["teams"]
         # Add team_a and then team_b
         x = [
-            player_data(p["puuid"], players)
+            player_data(p["puuid"], players, columns)
             for p in info["participants"]
             if p["teamId"] == team_a["teamId"]
         ]
         x.extend(
-            player_data(p["puuid"], players)
+            player_data(p["puuid"], players, columns)
             for p in info["participants"]
             if p["teamId"] == team_b["teamId"]
         )
         X.append(x)
+        Xr.append(list(reversed(x)))
         # Append match outcome
         y.append(int(team_a["win"]))
+        yr.append(int(team_b["win"]))
 
     X = np.array(X, dtype=np.float32)
+    Xr = np.array(Xr, dtype=np.float32)
     y = np.array(y, dtype=np.float32)
+    yr = np.array(yr, dtype=np.float32)
 
-    return X, y
+    return X, y, Xr, yr
 
 
 def load_player_model():
@@ -85,8 +94,14 @@ def get_final_weights():
 def build_player_model(player_vec_size):
     """Create player model which is applied to individual players."""
     inputs = tf.keras.Input(shape=(player_vec_size,), name="player_input")
-    x = layers.Dense(10, activation="relu")(inputs)
-    x = layers.Dense(5, activation="relu")(x)
+    x = inputs
+    # x = layers.GaussianNoise(0.1)(x)
+    x = layers.Dense(100, activation="relu", kernel_regularizer=tf.keras.regularizers.L2(0.01))(x)
+    x = layers.Dense(100, activation="relu", kernel_regularizer=tf.keras.regularizers.L2(0.01))(x)
+    x = layers.Dropout(0.4)(x)
+    x = layers.Dense(100, activation="relu", kernel_regularizer=tf.keras.regularizers.L2(0.01))(x)
+    x = layers.Dropout(0.4)(x)
+    x = layers.Dense(5, activation="relu", kernel_regularizer=tf.keras.regularizers.L2(0.01))(x)
     return tf.keras.Model(inputs, x, name="player_model")
 
 
@@ -105,7 +120,9 @@ def build_model(player_vec_size):
     team_b = layers.Lambda(lambda x: tf.reduce_sum(x, 1), name="sum_team_b")(team_b)
 
     diff = layers.Subtract(name="diff_teams")([team_a, team_b])
+    # diff = layers.Concatenate(axis=-1)([team_a, team_b])
     # Experimenting add: kernel_initializer="ones", trainable=False
+    # diff = layers.GaussianNoise(0.3)(diff)
     outputs = layers.Dense(1, activation=None, name="final_weights", use_bias=False)(diff)
 
     model = tf.keras.Model(inputs, outputs)
@@ -113,7 +130,7 @@ def build_model(player_vec_size):
         optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
         loss=tf.keras.losses.BinaryCrossentropy(
             from_logits=True,
-            label_smoothing=0.05, # Prevent some large values for sure-outcome matches
+            label_smoothing=0.0, # Prevent some large values for sure-outcome matches
             axis=-1,
             reduction="auto",
             name="binary_crossentropy",
@@ -124,7 +141,7 @@ def build_model(player_vec_size):
 
 
 if __name__ == "__main__":
-    X, y = load_data()
+    X, y, Xr, yr = load_data()
     # TODO: extend X and y by matches with switched teams?
     print("Shape of matches:", X.shape)
 
@@ -136,11 +153,11 @@ if __name__ == "__main__":
     for i, (train, test) in enumerate(kfold.split(X, y)):
         model = build_model(X.shape[-1])[0]
         model.fit(
-            X[train],
-            y[train],
+            np.concatenate((X[train], Xr[train])),
+            np.concatenate((y[train], yr[train])),
             validation_data=(X[test], y[test]),
             batch_size=batch_size,
-            epochs=100,
+            epochs=300,
             verbose=0,
         )
         model.evaluate(X[train], y[train])
