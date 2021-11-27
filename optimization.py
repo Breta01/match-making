@@ -1,12 +1,12 @@
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
-
+import itertools
+import pandas as pd
 from player_data_loader import get_local_player_data
 from prediction_model import (
     normalize_players_data, load_player_model, get_final_weights
 )
-
 
 # Load player model + weights
 PLAYER_MODEL = load_player_model()
@@ -14,6 +14,28 @@ WEIGHTS = get_final_weights()
 
 # Player data
 players = get_local_player_data()
+
+
+def __gamma(waiting_time):
+    gamma = []
+    gamma = [0 for i in range(3)]
+
+    if waiting_time < 60:
+        gamma[0] = 1
+        gamma[1] = 0
+        gamma[2] = 0
+
+    elif waiting_time >= 60:
+        gamma[0] = 1 / 2
+        gamma[1] = 1 / 2
+        gamma[2] = 0
+
+    else:
+        gamma[0] = 1 / 3
+        gamma[1] = 1 / 3
+        gamma[2] = 1 / 3
+
+    return gamma
 
 
 def process_players(players):
@@ -31,7 +53,7 @@ def process_players(players):
     return player_skill, player_tier, player_positions
 
 
-def optimize(skills, tiers, positions, waiting_times):
+def optimize(skills, tiers, positions, waiting_times, preferences_1, preferences_2, arrival_rates, gammas):
     """Build optimalization model, optimize and return it.
     
     Args:
@@ -41,35 +63,130 @@ def optimize(skills, tiers, positions, waiting_times):
         positions (np.array): array of player vector of prefered positions .
         waiting_times (np.array): array of player waiting times in seconds.
     """
+    M = 10000
+    team_size = 5
+    maximum_gap = 1
+    maximum_waiting = 180
+    teams = ['A', 'B']
+    lanes = ['Top', 'Jungle', 'Middle', 'AD Carry', 'Support']
+    ranks = ['Iron', 'Bronze', 'Gold', 'Silver', 'Diamond']
     # Create a new model
     m = gp.Model("matching")
-
     # Create variable for each player
-    team_a_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_a_{i}") for i in range(len(skills))]
-    team_b_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_b_{i}") for i in range(len(skills))]
+    team_vars = [[m.addVar(vtype=GRB.BINARY, name=f"player_{j}_{i}") for j in range(len(teams))] for i in range(len(skills))]
 
-    ob = m.addVar(name="objective")
-    abs_ob = m.addVar(name="abs_objective")
+    lanes_vars = [[[m.addVar(vtype=GRB.CONTINUOUS, name=f"lane_a_{i},{l},{j}") for j in range(len(teams))]
+                   for l in range(len(lanes))]
+                   for i in range(len(skills))]
 
-    # Set objective
-    player_zip = zip(skills, team_a_vars, team_b_vars)
+
+
+    team_rank_vars = [m.addVar(vtype=GRB.CONTINUOUS, name=f"rank_{j}") for j in range(len(teams))]
+
+    int_team_ranks_vars = [m.addVar(vtype=GRB.INTEGER, name=f"int_rank_{j}") for j in range(len(teams))]
+    dummy_ranks_vars = [m.addVar(vtype=GRB.BINARY, name=f"rank_{r}") for r in range(len(ranks))]
+
+    gap_vars = [[m.addVar(vtype=GRB.CONTINUOUS, name=f"gap_{i},{j}") for j in
+                range(len(teams))]for i in range(len(skills))]
+
+    # Set objectives
+
+    # Skill gap function
+
+    f1 = m.addVar(name=f"skill gap")
+
+    abs_f1 = m.addVar(name=f"absolute skill gap")
     m.addConstr(
-        ob == gp.quicksum(
-            s * a - s * b
-            for s, a, b in player_zip
-        ), 
-        "objective"
+        f1 == gp.quicksum((team_vars[i][1] - team_vars[i][0]) * skills[i] for i in range(len(skills))),
+        "skill gap"
     )
-    m.addConstr(abs_ob == gp.abs_(ob), name="abs_of_objective")
-    m.setObjective(abs_ob, GRB.MINIMIZE)
+    m.addConstr(
+        abs_f1 == gp.abs_(f1),
+        "Absolute skill gap"
+    )
 
-    # Player only in one team
-    for a, b in zip(team_a_vars, team_b_vars):
-        m.addConstr(a + b <= 1)
+    # Waiting time function
 
-    # Each team has exactly 5 players
-    m.addConstr(gp.quicksum(team_a_vars) == 5, name="team_a_size")
-    m.addConstr(gp.quicksum(team_b_vars) == 5, name="team_b_size")
+    f2 = gp.quicksum((team_vars[i][0] + team_vars[i][1]) * waiting_times[i] for i in range(len(skills))) / (2 * team_size)
+
+    # Predictability function
+
+    f3 = gp.quicksum(arrival_rates[r] * dummy_ranks_vars[r] for r in range(len(ranks)))
+
+    # Constraints
+    m.addConstrs(
+        (team_vars[i][0] + team_vars[i][1] <= 1 for i in range(len(skills))),
+        "player affectation"
+    )
+    m.addConstrs(
+        (gp.quicksum(team_vars[i][j] for i in range(len(skills))) == team_size for j in range(len(teams))),
+        "team_size"
+    )
+
+    m.addConstr(
+        gp.quicksum((team_vars[i][1] - team_vars[i][0]) * skills[i] for i in range(len(skills))) <= 1,
+        "Maximum skill gap upper bound"
+    )
+
+    m.addConstr(
+        gp.quicksum((team_vars[i][1] - team_vars[i][0]) * skills[i] for i in range(len(skills))) >= -1,
+        "Maximum skill gap lower bound"
+    )
+
+    # lane affectation
+    m.addConstrs((lanes_vars[i][l][j] - (gammas[i][0] * preferences_1[i][l] +
+                                       gammas[i][1] * preferences_2[i][l] +
+                                       gammas[i][2] * positions[i][l]) * team_vars[i][j] == 0
+                 for i in range(len(skills)) for l in range(len(lanes)) for j in range(len(teams))),
+                 "Role of player in his team")
+
+
+    m.addConstrs((gp.quicksum(lanes_vars[i][l][j] for i in range(len(skills)))
+                  + gp.quicksum(team_vars[i][j]*waiting_times[i] for i in range(len(skills)))/(team_size*maximum_waiting) >= 1
+                  for l in range(len(lanes)) for j in range(len(teams))), "Teams balance constraint")
+
+
+
+    #Teams rank and level constraint
+
+    m.addConstrs((team_rank_vars[j] - gp.quicksum(team_vars[i][j]*tiers[i] for i in range(len(skills)))/team_size == 0
+                  for j in range(len(teams))), "Mean rank of teams")
+
+    m.addConstrs((int_team_ranks_vars[j] - team_rank_vars[j] <= 0 for j in range(len(teams)))
+                 , "Integer of team rank upper bound ")
+
+    m.addConstrs((int_team_ranks_vars[j] - team_rank_vars[j] >= -0.99 for j in range(len(teams)))
+                 , "Integer of team rank lower bound ")
+
+    m.addConstr(int_team_ranks_vars[0] - int_team_ranks_vars[1] == 0, "same integer team rank")
+
+    m.addConstrs((team_vars[i][j] + gap_vars[i][j] - team_rank_vars[j] == 0 for i in range(len(skills))
+                  for j in range(len(teams))), "Gap constraint 1")
+
+    m.addConstrs((gap_vars[i][j] - maximum_gap*team_vars[i][j] - M*(1 - team_vars[i][j]) <= 0 for i in range(len(skills))
+                  for j in range(len(teams))), "Gap constraint 2 upper bound")
+
+    m.addConstrs(
+        (gap_vars[i][j] + maximum_gap * team_vars[i][j] + M * (1 - team_vars[i][j]) >= 0 for i in range(len(skills))
+         for j in range(len(teams))), "Gap constraint 2 lower bound")
+
+    # predictability constraints
+
+    m.addConstr(gp.quicksum(dummy_ranks_vars[r] for r in range(len(ranks))) == 1, "only one variable can be on")
+
+    m.addConstr(gp.quicksum((r+1)*dummy_ranks_vars[r] for r in range(len(ranks))) - int_team_ranks_vars[0] == 0,
+                "we choose the rank")
+
+    #Signs constraints
+    m.addConstrs((lanes_vars[i][l][j] >= 0 for i in range(len(skills)) for l in range(len(lanes))
+                  for j in range(len(teams))), "non negative")
+
+    m.addConstrs((team_rank_vars[j] >= 0  for j in range(len(teams))), "non negative")
+
+    m.addConstrs((gap_vars[i][j] >= 0 for i in range(len(skills)) for j in range(len(teams))))
+
+
+    m.setObjective(320 * f1 - f2 - f3, GRB.MINIMIZE)
 
     m.optimize()
     return m
@@ -78,9 +195,19 @@ def optimize(skills, tiers, positions, waiting_times):
 if __name__ == "__main__":
     skill, tier, positions = process_players(players[:100])
     # Create dummy waiting time
-    waiting_time = np.random.randint(0, 200, size=(len(skill,)))
+    waiting_time = np.random.randint(0, 200, size=(len(skill, )))
+    arrival_rates = np.random.randint(30, 120, size=5)
+    # Create random preferences
+    preferences_1 = np.random.multinomial(1, [1 / 5.] * 5, size=len(skill))
+    preferences_2 = np.random.multinomial(1, [1 / 5.] * 5, size=len(skill))
 
-    model = optimize(skill, tier, positions, waiting_time)
+    # Create weights for preferences
+    gammas = []
+    for index in range(len(skill)):
+        gamma = __gamma(waiting_time[index])
+        gammas.append(gamma)
+
+    model = optimize(skill, tier, positions, waiting_time, preferences_1, preferences_2, arrival_rates, gammas)
 
     # Print vars and objective
     for v in model.getVars():
@@ -91,7 +218,7 @@ if __name__ == "__main__":
     indices_a, indices_b = [], []
     for v in model.getVars():
         if v.varName[:7] == "player_" and v.x > 0.9:
-            if v.varName.split("_")[1] == "a":
+            if v.varName.split("_")[1] == "0":
                 indices_a.append(int(v.varName.split("_")[-1]))
             else:
                 indices_b.append(int(v.varName.split("_")[-1]))
@@ -99,3 +226,4 @@ if __name__ == "__main__":
     assert len(indices_a) == 5 and len(indices_b) == 5
     print("Team A:", indices_a)
     print("Team B:", indices_b)
+
