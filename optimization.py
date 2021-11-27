@@ -111,7 +111,7 @@ def optimize(skills, tiers, positions, waiting_times, preferences_1, preferences
 
     # Predictability function
 
-    f3 = gp.quicksum(arrival_rates[r] * dummy_ranks_vars[r] for r in range(len(ranks)))
+    f3 = gp.quicksum(1 / arrival_rates[r] * dummy_ranks_vars[r] for r in range(len(ranks)))
 
     # Constraints
     m.addConstrs(
@@ -186,7 +186,7 @@ def optimize(skills, tiers, positions, waiting_times, preferences_1, preferences
     m.addConstrs((gap_vars[i][j] >= 0 for i in range(len(skills)) for j in range(len(teams))))
 
 
-    m.setObjective(320 * f1 - f2 - f3, GRB.MINIMIZE)
+    m.setObjective(200 * abs_f1 - f2 - f3, GRB.MINIMIZE)
 
     m.optimize()
     return m

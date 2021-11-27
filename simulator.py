@@ -1,3 +1,7 @@
+import math
+from re import template
+
+from joblib import dump
 import numpy as np
 
 from player_data_loader import get_local_player_data
@@ -25,23 +29,17 @@ def get_pool(tier_players, size):
 
 
 def get_players_by_rate(tier_players, rates, arrival_times, time):
-    print("Players by rate")
     new_players = []
     for tier in tier_players:
         while arrival_times[tier] < time:
             arrival_times[tier] += np.random.exponential(1 / rates[tier])
 
             players = tier_players[tier]
-            print("Players 1", tier_players[tier].shape)
             if len(players) > 0:
                 idx = np.random.choice(len(players))
-                print(players[idx])
                 new_players.append(players[idx])
                 tier_players[tier] = np.delete(players, idx, axis=0)
             
-            print("Players 2", tier_players[tier].shape)
-
-    print()
     return np.array(new_players), tier_players, arrival_times
 
 
@@ -53,12 +51,21 @@ def player_entry(players):
     return np.hstack([players, waiting_times, preferences_1, preferences_2])
 
 
-def prepare_players(pool):
-    return pool[:, 1:]
+def sigmoid(x):
+  return 1 / (1 + math.exp(-x))
 
 
-def simulate(players, init_size, time_steps, rates):
-    rates = [1, 2, 1/1.2, 1/2, 1/5, 1/10]
+def calculate_statistics(team_a, team_b):
+    stats = []
+    stats.append(sigmoid(sum(team_a[:, 0]) - sum(team_b[:, 0])))
+    stats.append(sum(team_a[:, 0]) - sum(team_b[:, 0]))
+    stats.append([*team_a[:, 3].tolist(), *team_b[:, 3].tolist()])
+    stats.append(max(team_a[:, 3].max(), team_b[:, 3].max()))
+    return stats
+
+
+def simulate(players, init_size, time_steps):
+    rates = [0.9, 1.3, 1.1, 0.2, 0.2, 0.1]
     arrival_times = [np.random.exponential(1/r) for r in rates]
 
     # Prepare spliting players by tiers
@@ -68,7 +75,7 @@ def simulate(players, init_size, time_steps, rates):
     tier_players = {
         i: np.array(v, dtype=object)
         for i, v in tier_players.items()
-        if len(v)
+        if len(v) and len(v) > 10
     }
 
     pool, tier_players = get_pool(tier_players, init_size)
@@ -77,11 +84,18 @@ def simulate(players, init_size, time_steps, rates):
     pool = player_entry(pool)
     playing_players = []
 
+    # Prob, waiting times, max waiting time
+    stats = []
+
     # Change here: 1 timestep = 1 second
     timestep = 1
     for t in range(time_steps):
+        if t % 50 == 0:
+            print("Saving, time:", t)
+            dump(stats, "data/stats.joblib")
+ 
         # Update waiting time of pool players
-        pool[:, -1] += timestep
+        pool[:, 3] += timestep
 
         # Playing players returns to inactive
         if len(playing_players) > 0 and playing_players[0]["start_time"] + 300 <= t:
@@ -114,14 +128,15 @@ def simulate(players, init_size, time_steps, rates):
         res_model = optimize(*args, prefs1, prefs2, rates, gammas)
 
         # No good team found -> continue with next round
-        if res_model.solCount > 0 and res_model.objVal > 0:
+        if res_model.solCount == 0 or (res_model.solCount > 0 and res_model.objVal > 0):
+            stats.append(None)
             continue
 
         # Extact new teams from pool
         indices_a, indices_b = [], []
         for v in res_model.getVars():
             if v.varName[:7] == "player_" and v.x > 0.9:
-                if v.varName.split("_")[1] == "A":
+                if v.varName.split("_")[1] == "0":
                     indices_a.append(int(v.varName.split("_")[-1]))
                 else:
                     indices_b.append(int(v.varName.split("_")[-1]))
@@ -134,15 +149,25 @@ def simulate(players, init_size, time_steps, rates):
             "players": pool[indices, :3]
         })
 
+        # TODO: handle gaps
+        s = calculate_statistics(pool[indices_a], pool[indices_b])
+        s.append(len(pool))
+        stats.append(s)
+
         # Remove playing players from pool
         mask = np.ones(len(pool), dtype=bool)
         mask[indices] = False
+        print(len(pool))
         pool = pool[mask]
+        print(len(pool))
+        print("--break--")
+
+   
+    dump(stats, "data/stats.joblib")
 
 
 if __name__ == "__main__":
     players = get_local_player_data()
     # Players bacome tuples of (skill, tier, positions)
     players = list(zip(*process_players(players)))
-    print(players[:10])
-    simulate(players, 100, 1000, 1)
+    simulate(players, 100, 1000)
