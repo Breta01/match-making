@@ -121,7 +121,7 @@ def simulate(players, init_size, time_steps, rates):
         indices_a, indices_b = [], []
         for v in res_model.getVars():
             if v.varName[:7] == "player_" and v.x > 0.9:
-                if v.varName.split("_")[1] == "a":
+                if v.varName.split("_")[1] == "A":
                     indices_a.append(int(v.varName.split("_")[-1]))
                 else:
                     indices_b.append(int(v.varName.split("_")[-1]))
