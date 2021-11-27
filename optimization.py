@@ -2,8 +2,10 @@ import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
 
-from prediction_model import load_player_model, get_final_weights
 from player_data_loader import get_local_player_data
+from prediction_model import (
+    normalize_players_data, load_player_model, get_final_weights
+)
 
 
 # Load player model + weights
@@ -16,37 +18,45 @@ players = get_local_player_data()
 
 def process_players(players):
     """Process player vectors by player_model."""
-    # Replace with player_mode.predict(players) in case of memory issues
-    columns = players.columns[~players.columns.isin(["summoner_id", "puuid"])]
-    # TODO: normalize players before processing
-    return np.array(PLAYER_MODEL(
-        players[columns].to_numpy()
-    ))
+    # Normalize players
+    players, columns = normalize_players_data(players)
+
+    player_tier = players["tier"].to_numpy()
+
+    pos_columns = filter(lambda x: "position" in x, players.columns)
+    player_positions = players[pos_columns].to_numpy()
+
+    player_skill = np.array(PLAYER_MODEL(players[columns].to_numpy())) @ WEIGHTS
+
+    return player_skill, player_tier, player_positions
 
 
-def optimize(players):
+def optimize(skills, tiers, positions, waiting_times):
     """Build optimalization model, optimize and return it.
     
     Args:
-        players (np.array): array of processd player vectors (result of player_model).
+        skills (np.array): array of player skill value
+            (result of player_model @ final_weigths).
+        tiers (np.array): array of player tiers.
+        positions (np.array): array of player vector of prefered positions .
+        waiting_times (np.array): array of player waiting times in seconds.
     """
     # Create a new model
     m = gp.Model("matching")
 
     # Create variable for each player
-    team_a_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_a_{i}") for i in range(len(players))]
-    team_b_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_b_{i}") for i in range(len(players))]
+    team_a_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_a_{i}") for i in range(len(skills))]
+    team_b_vars = [m.addVar(vtype=GRB.BINARY, name=f"player_b_{i}") for i in range(len(skills))]
 
     ob = m.addVar(name="objective")
     abs_ob = m.addVar(name="abs_objective")
 
     # Set objective
-    player_zip = zip(players, team_a_vars, team_b_vars)
+    player_zip = zip(skills, team_a_vars, team_b_vars)
     m.addConstr(
         ob == gp.quicksum(
-            p[i] * w * a - p[i] * w * b
-            for p, a, b in player_zip
-            for i, w in enumerate(WEIGHTS)
+            s * a - s * b
+            for s, a, b in player_zip
         ), 
         "objective"
     )
@@ -66,9 +76,11 @@ def optimize(players):
 
 
 if __name__ == "__main__":
-    processed_players = process_players(players)
+    skill, tier, positions = process_players(players[:100])
+    # Create dummy waiting time
+    waiting_time = np.random.randint(0, 200, size=(len(skill,)))
 
-    model = optimize(processed_players[:100])
+    model = optimize(skill, tier, positions, waiting_time)
 
     # Print vars and objective
     for v in model.getVars():
