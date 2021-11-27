@@ -63,7 +63,7 @@ def _collect_matchlist(puuid):
         try:
             # queue 420 should correspond to ranked solo 5x5 matches
             return w.match.matchlist_by_puuid(
-                match_region, puuid, queue=420, start=0, count=50
+                match_region, puuid, queue=420, start=0, count=5
             )
         except ApiError as e:
             print("Error collecting player's matches:", e)
@@ -122,7 +122,7 @@ def _save_final_state(matches, player_ids, queue):
         pickle.dump(queue, f)
 
 
-def download_data(num_players=1e3):
+def download_data(num_players=1e4):
     """Use seed players to download ranked games."""
     matches_list, player_ids, queue = _get_start_state()
     processed_matches = set(m["metadata"]["matchId"] for m in matches_list)

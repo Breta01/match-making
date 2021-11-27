@@ -38,6 +38,7 @@ def normalize_players_data(players, train=False):
 
     if not SCALER_PATH.exists() or train:
         scaler = StandardScaler().fit(players[columns])
+        SCALER_PATH.parent.mkdir(parents=True, exist_ok=True)
         dump(scaler, SCALER_PATH)
     else:
         scaler = load(SCALER_PATH)
