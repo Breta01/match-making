@@ -21,7 +21,7 @@ def get_local_player_rank_data():
     """Obtain data about rank of a player."""
     df = pd.read_csv(RANK_PLAYERS_FILE)
 
-    rank_map = {
+    tier_map = {
         "IRON":        1,
         "BRONZE":      2,
         "SILVER":      3,
@@ -33,16 +33,26 @@ def get_local_player_rank_data():
         "CHALLENGER":  9,
     }
 
-    for col in rank_map.keys():
+    rank_map = {
+        "I":   1,
+        "II":  2,
+        "III": 3,
+        "IV":  4,
+    }
+
+    for col in tier_map.keys():
         df[f"tier_{col}"] = 0
 
     dummies = pd.get_dummies(df["tier"], prefix="tier")
     df[dummies.columns] = dummies
 
-    df.replace({"tier": rank_map}, inplace=True)
+    df.replace({"tier": tier_map}, inplace=True)
     df = df.set_index(['summonerId'])
 
-    return df[filter(lambda x: "tier" in x, df.columns)]
+    df.replace({"rank": rank_map}, inplace=True)
+    df["dummy_skill"] = df["tier"] + df["rank"] / 10 + df["leaguePoints"] / 1000
+
+    return df[["dummy_skill", *filter(lambda x: "tier" in x, df.columns)]]
 
 
 def get_local_player_data():

@@ -1,8 +1,9 @@
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
-import itertools
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
 from player_data_loader import get_local_player_data
 from prediction_model import (
     normalize_players_data, load_player_model, get_final_weights
@@ -17,25 +18,49 @@ players = get_local_player_data()
 
 
 def __gamma(waiting_time):
-    gamma = []
-    gamma = [0 for i in range(3)]
+    gamma = [0 for _ in range(4)]
 
     if waiting_time < 60:
         gamma[0] = 1
         gamma[1] = 0
         gamma[2] = 0
+        gamma[3] = 0
 
-    elif waiting_time >= 60:
-        gamma[0] = 1 / 2
-        gamma[1] = 1 / 2
+    elif waiting_time < 120:
+        gamma[0] = 1
+        gamma[1] = 1
         gamma[2] = 0
+        gamma[3] = 0
+
+    elif waiting_time < 180:
+        gamma[0] = 1
+        gamma[1] = 1
+        gamma[2] = 1
+        gamma[3] = 0
 
     else:
-        gamma[0] = 1 / 3
-        gamma[1] = 1 / 3
-        gamma[2] = 1 / 3
+        gamma[0] = 1
+        gamma[1] = 1
+        gamma[2] = 1
+        gamma[3] = 1
 
     return gamma
+
+
+def dummy_process_players(players):
+    """Process players with skills infered from rank and tier."""
+    players, columns = normalize_players_data(players)
+
+    player_tier = players["tier"].to_numpy()
+
+    pos_columns = filter(lambda x: "position" in x, players.columns)
+    player_positions = players[pos_columns].to_numpy()
+
+    player_skill = players["dummy_skill"].to_numpy()
+    scaler = StandardScaler().fit(player_skill.reshape((-1, 1)))
+    player_skill = scaler.transform(player_skill.reshape((-1, 1))).reshape(-1)
+
+    return player_skill, player_tier, player_positions
 
 
 def process_players(players):
@@ -136,7 +161,8 @@ def optimize(skills, tiers, positions, waiting_times, preferences_1, preferences
     # lane affectation
     m.addConstrs((lanes_vars[i][l][j] - (gammas[i][0] * preferences_1[i][l] +
                                        gammas[i][1] * preferences_2[i][l] +
-                                       gammas[i][2] * positions[i][l]) * team_vars[i][j] == 0
+                                       gammas[i][2] * positions[i][l] +
+                                       gammas[i][3]) * team_vars[i][j] == 0
                  for i in range(len(skills)) for l in range(len(lanes)) for j in range(len(teams))),
                  "Role of player in his team")
 
@@ -160,7 +186,7 @@ def optimize(skills, tiers, positions, waiting_times, preferences_1, preferences
 
     m.addConstr(int_team_ranks_vars[0] - int_team_ranks_vars[1] == 0, "same integer team rank")
 
-    m.addConstrs((team_vars[i][j] + gap_vars[i][j] - team_rank_vars[j] == 0 for i in range(len(skills))
+    m.addConstrs((team_vars[i][j] * tiers[i] + gap_vars[i][j] - team_rank_vars[j] == 0 for i in range(len(skills))
                   for j in range(len(teams))), "Gap constraint 1")
 
     m.addConstrs((gap_vars[i][j] - maximum_gap*team_vars[i][j] - M*(1 - team_vars[i][j]) <= 0 for i in range(len(skills))
@@ -186,7 +212,7 @@ def optimize(skills, tiers, positions, waiting_times, preferences_1, preferences
     m.addConstrs((gap_vars[i][j] >= 0 for i in range(len(skills)) for j in range(len(teams))))
 
 
-    m.setObjective(200 * abs_f1 - f2 - f3, GRB.MINIMIZE)
+    m.setObjective(100 * abs_f1 - f2 - f3, GRB.MINIMIZE)
 
     m.optimize()
     return m
@@ -209,9 +235,33 @@ if __name__ == "__main__":
 
     model = optimize(skill, tier, positions, waiting_time, preferences_1, preferences_2, arrival_rates, gammas)
 
+
     # Print vars and objective
+    # for v in model.getVars():
+    #     print('%s %g' % (v.varName, v.x))
+
+    print('Obj: %g' % model.objVal)
+
+    indices_a, indices_b = [], []
     for v in model.getVars():
-        print('%s %g' % (v.varName, v.x))
+        if v.varName[:7] == "player_" and v.x > 0.9:
+            if v.varName.split("_")[1] == "0":
+                indices_a.append(int(v.varName.split("_")[-1]))
+            else:
+                indices_b.append(int(v.varName.split("_")[-1]))
+
+    assert len(indices_a) == 5 and len(indices_b) == 5
+    print("Team A:", indices_a)
+    print("Team B:", indices_b)
+
+
+
+    skill, tier, positions = dummy_process_players(players[:100])
+    model = optimize(skill, tier, positions, waiting_time, preferences_1, preferences_2, arrival_rates, gammas)
+
+    # Print vars and objective
+    # for v in model.getVars():
+    #     print('%s %g' % (v.varName, v.x))
 
     print('Obj: %g' % model.objVal)
 

@@ -19,7 +19,7 @@ help:
 	@echo "        Clean repository"
 
 install:
-	sudo apt-get -y install build-essential $(PYTHON_VERSION) $(PYTHON_VERSION)-dev
+#	sudo apt-get -y install build-essential $(PYTHON_VERSION) $(PYTHON_VERSION)-dev
 	git update-index --skip-worktree env.py
 	${PYTHON_VERSION} -m pip install virtualenv
 	make venv

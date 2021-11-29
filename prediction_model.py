@@ -122,7 +122,7 @@ def build_player_model(player_vec_size):
     x = layers.Add()([x, y])
 
     # x = layers.Dropout(0.5)(x)
-    x = layers.Dense(10, activation="relu")(x)
+    x = layers.Dense(10, activation="sigmoid")(x)
     return tf.keras.Model(inputs, x, name="player_model")
 
 
@@ -145,10 +145,10 @@ def build_model(player_vec_size):
 
     model = tf.keras.Model(inputs, outputs)
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
         loss=tf.keras.losses.BinaryCrossentropy(
             from_logits=True,
-            label_smoothing=0.05, # Prevent some large values for sure-outcome matches
+            label_smoothing=0.40, # Prevent some large values for sure-outcome matches
             axis=-1,
             reduction="auto",
             name="binary_crossentropy",
@@ -171,7 +171,7 @@ if __name__ == "__main__":
 
     for i, (train, test) in enumerate(kfold.split(X, y)):
         model = build_model(X.shape[-1])[0]
-        model.fit(
+        history = model.fit(
             np.concatenate((X[train], Xr[train])),
             np.concatenate((y[train], yr[train])),
             validation_data=(X[test], y[test]),
@@ -190,8 +190,8 @@ if __name__ == "__main__":
     model, player_model = build_model(player_vec_size=X.shape[-1])
 
     model.fit(
-        np.concatenate((X[train], Xr[train])),
-        np.concatenate((y[train], yr[train])),
+        np.concatenate((X, Xr)),
+        np.concatenate((y, yr)),
         batch_size=batch_size,
         epochs=220
     )
