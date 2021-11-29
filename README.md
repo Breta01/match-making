@@ -35,9 +35,9 @@ python prediction_mode.py
 ### Quick start
 You **don't** need to run the first two files for collecting data as these files aree already provided. So you can run the code using next three commands:
 ```bash
-ptyhon prediction_model.py
+python prediction_model.py
 python optimization.py # This one is mainly for debugging it doesn't output anything
-ptyhon simulator.py
+python simulator.py
 ```
 
 ## Visualisation
