@@ -48,3 +48,7 @@ jupyter lab
 ```
 
 _The simulation is currently set to only 1000 steps are more steps can take a lot of time to run_
+
+# Authors
+[Anas Abdelhakmi](https://www.linkedin.com/in/anas-abdelhakmi-a74331182/)  
+[Břetislav Hájek](https://www.linkedin.com/in/b%C5%99etislav-h%C3%A1jek-75167111b/)
